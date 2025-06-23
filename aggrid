@@ -1,0 +1,1785 @@
+import {
+	Component,
+	Input,
+	OnInit,
+	OnChanges,
+	Output,
+	EventEmitter,
+	ViewChild,
+  } from '@angular/core';
+  import { FieldTypes } from '../../FieldTypes';
+  import { AgGridAngular } from 'ag-grid-angular';
+  import {
+	ColDef,
+	IFilterComp,
+	GridApi,
+	ColumnState,
+	MenuItemDef,
+	ValueFormatterParams,
+	ExcelExportParams,
+	ITooltipParams,
+  } from 'ag-grid-community';
+  import 'ag-grid-enterprise';
+  import { ActionsSideToolBarComponent } from './datagrid.ActionsSideToolBar';
+  import { AG_GRID_LOCALE_EN } from './datagrid.locale/locale.en';
+  import { AG_GRID_LOCALE_TR } from './datagrid.locale/locale.tr';
+  import { ButtonBarItem } from '../buttonbar/buttonbar.component';
+  import { StatusBarPaginationComponent } from './datagrid.StatusBarPagination';
+  import { StatusBarTotalsComponent } from './datagrid.StatusBarTotals';
+  import { ActivatedRoute, Router } from '@angular/router';
+  import { StorageService } from '../../services/storage.service';
+  import { GlobalsService } from '../../services/globals.service';
+  import { ViasConnectionService } from '../../services/vias-connection.service';
+  import { MatDialog } from '@angular/material/dialog';
+  import { TranslateService } from '@ngx-translate/core';
+  export enum AgrFuncs {
+	sum,
+	avrg,
+	count,
+  }
+  
+  export interface StatusBarSummaryData {
+	title: string;
+	unitName: string;
+	field: string;
+	aggFunc: AgrFuncs;
+	sumTotalFunction?: any;
+  }
+  export interface DataGridColumn {
+	dataField: string;
+	headerText?: string;
+	align?: string;
+	width?: number;
+	widthPercent?: number;
+	dataType?: FieldTypes;
+	isFilterValue?: boolean;
+	sortType?: SortType;
+	sortField?: string;
+  
+	// sutun basliginda filtre ve sort iconlarini kaldir
+	noHeaderIcons?: boolean;
+  
+	filterField?: string;
+	filterDataSource?: FilterOptions[];
+	filterDataSourceFunc?: () => FilterOptions[];
+	filterDataIdField?: string;
+	filterDataLabelField?: string;
+	// datasinin bagli oldugu filterField yazilacak (orn project->project details  durumunda project_id)
+	filterConnectedField?: string;
+  
+	labelFunctionIsFilter?: boolean;
+	labelFunction?: any;
+	// tek basina icinde TL, USD gibi text olacak
+	// ya da unitDataSource icin id alani
+	unitField?: string;
+	// sadece get_currencies ve get_units ile ve unitField ile beraber kullanilacak
+	unitDataSource?: string;
+	// symbol right / left verildi ise o alanlar
+	// right ayni zamanda unit icin de kullanilabilir
+	currencyRightField?: string;
+	currencyLeftField?: string;
+	fractionDigits?: number;
+	footerData?: any;
+  
+	editable?: boolean | ((params: any) => boolean);
+	editField?: string;
+	editDataSource?: FilterOptions[];
+	editDataSourceFunc?: () => FilterOptions[];
+	editDataIdField?: string;
+	editDataLabelField?: string;
+	columnColor?: string;
+	cellStyleFunc?: (params: any) => {};
+	cellRendererFunc?: (params: any) => {};
+	tooltipValueGetter?: (params: ITooltipParams) => {};
+	columnBackgroundColor?: string;
+	sticky?: boolean;
+	wrap?: boolean;
+  }
+  
+  export interface DGButtons {
+	hasAddBtn: boolean;
+	hasEditBtn: boolean;
+	hasDeleteBtn: boolean;
+	addBtnText?: string;
+	editBtnText?: string;
+	deleteBtnText?: string;
+	addBtnColor?: string;
+	editBtnColor?: string;
+	deleteBtnColor?: string;
+	addBtnIcon?: string;
+	editBtnIcon?: string;
+	deleteBtnIcon?: string;
+  }
+  
+  export interface DGMenuItem {
+	name: string;
+	disabled?: boolean;
+	shortcut?: string;
+	action?: (event: any, ...args: any[]) => void;
+	checked?: boolean;
+	icon?: HTMLElement | string;
+	subMenu?: (DGMenuItem | string)[];
+	cssClasses?: string[];
+	tooltip?: string;
+  }
+  
+  export enum SortType {
+	Ascending = 'asc',
+	Descending = 'desc',
+  }
+  export interface SortObject {
+	column_name: string;
+	sort_type: SortType;
+  }
+  export interface FilterOptions {
+	value: any;
+	label: string;
+  }
+  export interface DataGridRefreshEvent {
+	pageNo?: number;
+	sort?: SortObject;
+	filters?: { [prop: string]: any };
+  }
+  export enum PageDirection {
+	First,
+	Previous,
+	Next,
+	Last,
+  }
+  export interface DataGridEvent {
+	index?: number;
+	item?: object;
+	selectedItems?: object[];
+  }
+  export interface CellChangeEvent {
+	newValue?: string;
+	columnId?: string;
+	rowData?: object;
+  }
+  export interface ColumnStateEvent {
+	tableId: string;
+	state: ColumnState[];
+  }
+  export interface DgApiEvent {
+	dgApi?: GridApi;
+	dgOpt?: any;
+  }
+  @Component({
+	selector: 'vias-datagrid',
+	templateUrl: './datagrid.component.html',
+	styleUrls: ['./datagrid.component.scss'],
+  })
+  export class DatagridComponent implements OnChanges {
+	@ViewChild('agGrid', { static: false }) agGrid: AgGridAngular;
+  
+	@Input() numLocale: string = '';
+	@Input() dgWidth?: string = '97%';
+	@Input() dgHeight?: string = '85vh';
+	@Input() cellEditorParams?: string = '';
+	@Input() singleEdit?: string = '';
+	@Input() dataSource: object[];
+	@Input() columns: DataGridColumn[];
+	@Input() changeCol?: DataGridColumn = null;
+	private dgColumnsArray: DataGridColumn[] = [];
+	@Input() rowClassRules: any;
+	@Input() currentPage: number = 1;
+	@Input() totalPages: number = 1;
+	@Input() contextMenuItems?: DGMenuItem[];
+	@Input() sideMenuItems?: ButtonBarItem[];
+	@Input() statusBarItems?: StatusBarSummaryData[];
+	@Input() options: {} = {};
+	@Input() dgButtons?: DGButtons;
+	@Input() columnState: ColumnState[];
+	@Input() tableId: string;
+	@Input() hasStateButtons: boolean = true;
+	@Input() enableCharts: boolean = false;
+	@Input() rowStyleFunc?: (params: any) => {};
+	@Output() refresh: EventEmitter<DataGridRefreshEvent> =
+	  new EventEmitter<DataGridRefreshEvent>();
+	@Output() rowClick: EventEmitter<DataGridEvent> =
+	  new EventEmitter<DataGridEvent>();
+	@Output() dblClick: EventEmitter<DataGridEvent> =
+	  new EventEmitter<DataGridEvent>();
+	@Output() selectClick: EventEmitter<DataGridEvent> =
+	  new EventEmitter<DataGridEvent>();
+	@Output() selectChange: EventEmitter<DataGridEvent> =
+	  new EventEmitter<DataGridEvent>();
+	@Output() addClick: EventEmitter<DataGridEvent> =
+	  new EventEmitter<DataGridEvent>();
+	@Output() editClick: EventEmitter<DataGridEvent> =
+	  new EventEmitter<DataGridEvent>();
+	@Output() deleteClick: EventEmitter<DataGridEvent> =
+	  new EventEmitter<DataGridEvent>();
+	@Output() cellChange: EventEmitter<CellChangeEvent> =
+	  new EventEmitter<CellChangeEvent>();
+	@Output() columnStateChange: EventEmitter<ColumnStateEvent> =
+	  new EventEmitter<ColumnStateEvent>();
+	@Output() gridReady: EventEmitter<DgApiEvent> =
+	  new EventEmitter<DgApiEvent>();
+	@Output() contexMenuAction: EventEmitter<DataGridEvent> =
+	  new EventEmitter<DataGridEvent>();
+	@Output() pasteEnd: EventEmitter<any> = new EventEmitter<any>();
+	@Output() pasteStart: EventEmitter<any> = new EventEmitter<any>();
+	@Output() pasteParsed: EventEmitter<any> = new EventEmitter<any>();
+
+  
+	dgButtonsInit: DGButtons = {
+	  hasAddBtn: false,
+	  hasEditBtn: false,
+	  hasDeleteBtn: false,
+	  addBtnText: 'add',
+	  editBtnText: 'edit',
+	  deleteBtnText: 'delete',
+	  addBtnColor: 'primary',
+	  editBtnColor: 'primary',
+	  deleteBtnColor: 'warn',
+	  addBtnIcon: '',
+	  editBtnIcon: '',
+	  deleteBtnIcon: '',
+	};
+  
+	private gridApi;
+	private gridColumnApi;
+	// isDarkTheme: boolean;
+	private contextMenuParams: any;
+	theme: string = 'ag-theme-balham';
+	private secilmislerKlubu: any[];
+	isMultipleSelect: boolean = false;
+	sort: SortObject; // = { column_name: 'id', sort_type: SortType.Descending };
+	originalFilterModel;
+	filterModel: {};
+	columnDefs = [];
+	statusBar = {
+	  statusPanels: [
+		{
+		  statusPanel: 'StatusPanelTotals',
+		  statusPanelParams: {
+			summaryData: [],
+		  },
+		  align: 'left',
+		},
+		{
+		  statusPanel: 'agAggregationComponent',
+		  align: 'center',
+		  statusPanelParams: {
+			aggFuncs: ['count', 'sum', 'min', 'max', 'avg'],
+		  },
+		},
+		{
+		  statusPanel: 'StatusPanelPagination',
+		  align: 'right',
+		},
+	  ],
+	};
+	sideBar = {
+	  toolPanels: [
+		{
+		  id: 'columns',
+		  labelDefault: 'Columns',
+		  labelKey: 'columns',
+		  iconKey: 'columns',
+		  toolPanel: 'agColumnsToolPanel',
+		  toolPanelParams: {
+			suppressColumnMove: false,
+			suppressRowGroups: true,
+			suppressValues: true,
+			suppressPivots: true,
+			suppressPivotMode: true,
+			suppressSideButtons: false,
+			suppressColumnFilter: false,
+			suppressColumnSelectAll: false,
+			suppressColumnExpandAll: false,
+		  },
+		},
+		{
+		  id: 'filters',
+		  labelDefault: 'Filters',
+		  labelKey: 'filters',
+		  iconKey: 'filter',
+		  toolPanel: 'agFiltersToolPanel',
+		},
+		{
+		  id: 'actionsBar',
+		  labelDefault: 'İşlemler',
+		  labelKey: 'customStats',
+		  iconKey: 'columns',
+		  toolPanel: 'ActionsSideToolBar',
+		  sideMenuItems: [],
+		  toolPanelParams: {
+			suppressColumnMove: false,
+			suppressRowGroups: true,
+			suppressValues: true,
+			suppressPivots: true,
+			suppressPivotMode: true,
+			suppressSideButtons: false,
+			suppressColumnFilter: false,
+			suppressColumnSelectAll: false,
+			suppressColumnExpandAll: false,
+		  },
+		},
+	  ],
+	  position: 'left',
+	  defaultToolPanel: '',
+	  hiddenByDefault: false,
+	};
+	localeText;
+	gridOptions;
+	defaultColDef = {
+	  sortable: true,
+	  resizable: true,
+	  menuTabs: ['filterMenuTab', 'generalMenuTab'],
+	};
+	frameworkComponents;
+	emptyErrorText: string = '';
+	firstLoadError: string = '';
+  
+	textFilterParams = {
+	  filterOptions: ['equals', 'contains', 'startsWith', 'endsWith'],
+	  defaultOption: 'contains',
+	  defaultJoinOperator: 'OR',
+	  newRowsAction: 'keep',
+	  // turkce karakter duzenleme
+	  textFormatter: (value) => {
+		return value
+		  .toLowerCase()
+		  .replace(/\s/g, '')
+		  .replace(/[àáâãäå]/g, 'a')
+		  .replace(/æ/g, 'ae')
+		  .replace(/ç/g, 'c')
+		  .replace(/ş/g, 's')
+		  .replace(/ğ/g, 'g')
+		  .replace(/[èéêë]/g, 'e')
+		  .replace(/[ìíîïİı]/g, 'i')
+		  .replace(/ñ/g, 'n')
+		  .replace(/[òóôõö]/g, 'o')
+		  .replace(/œ/g, 'oe')
+		  .replace(/[ùúûü]/g, 'u')
+		  .replace(/[ýÿ]/g, 'y')
+		  .replace(/\W/g, '');
+	  },
+	};
+  
+	idFilterParams = {
+	  filterOptions: ['equals', 'lessThanOrEqual', 'greaterThanOrEqual'],
+	  defaultOption: 'equals',
+	  defaultJoinOperator: 'OR',
+	  newRowsAction: 'keep',
+	  // filtre icine sadece rakam girilebilir
+	  allowedCharPattern: '\\d',
+	};
+	numericFilterParams = {
+	  filterOptions: ['equals', 'lessThanOrEqual', 'greaterThanOrEqual'],
+	  defaultOption: 'equals',
+	  defaultJoinOperator: 'AND',
+	  newRowsAction: 'keep',
+	  // filtre icine sadece rakam virgul ve eksi isareti girilebilir
+	  allowedCharPattern: '\\d\\-\\,',
+	  // filtre icine yazilan virgullu degeri noktali degere ceviriyor
+	  numberParser(text): any {
+		return text == null ? null : parseFloat(text.replace(',', '.'));
+	  },
+	};
+  
+	dateFilterParams = {
+	  filterOptions: [
+		'inRange',
+		'equals',
+		'lessThanOrEqual',
+		'greaterThanOrEqual',
+	  ],
+	  defaultOption: 'equals',
+	  alwaysShowBothConditions: false,
+	  suppressAndOrCondition: true,
+	  newRowsAction: 'keep',
+	  minValidYear: 2016,
+	};
+  
+	public defaultExcelExportParams: ExcelExportParams = {
+	  processCellCallback: (params) => {
+		const coldef: ColDef = params.column.getColDef();
+		if (coldef.valueFormatter) {
+		  const valForm: ValueFormatterParams = {
+			...params,
+			data: params.node.data,
+			node: params.node,
+			colDef: params.column.getColDef(),
+		  };
+		  if (typeof coldef.valueFormatter === 'function') {
+			return coldef.valueFormatter(valForm);
+		  }
+		}
+		return params.value;
+		const rowIndex = 1;
+		const valueGetter = params.column.getColDef().valueGetter;
+		return !!valueGetter
+		  ? `=CONCATENATE(A${rowIndex}, " ", B${rowIndex})`
+		  : params.value;
+	  },
+	};
+	excelStyles = [
+	  {
+		id: 'date',
+		dataType: FieldTypes.DatePicker,
+		numberFormat: { format: 'd.mm.yyyy' },
+	  },
+	  {
+		id: 'dateTime',
+		dataType: FieldTypes.Time,
+		numberFormat: { format: 'd.mm.yyyy hh:mm:ss' },
+	  },
+	];
+  
+	pagination = true;
+	pageChangeSubscribed = false;
+	filterHasRun: boolean = false;
+	pageHasChanged: boolean = false;
+  
+	constructor(
+	  protected next: ActivatedRoute,
+	  protected route: Router,
+	  protected storage: StorageService,
+	  protected globals: GlobalsService,
+	  protected viasService: ViasConnectionService,
+	  protected dialog: MatDialog,
+	  protected translate: TranslateService) {
+	  //console.log('+___+1');
+	  this.frameworkComponents = {
+		ActionsSideToolBar: ActionsSideToolBarComponent,
+		StatusPanelPagination: StatusBarPaginationComponent,
+		StatusPanelTotals: StatusBarTotalsComponent,
+	  };
+	  this.gridOptions = {
+		rowSelection: 'single',
+		rowBuffer: 75,
+		suppressNoRowsOverlay: true,
+    	onPasteStart: this.handlePasteStart.bind(this),
+		onPasteEnd: this.handlePasteEnd.bind(this),
+		clipboardPasteParser: this.pasteParser.bind(this),
+	  };
+	//   this.themeService.user$.subscribe((thme) => {
+	// 	this.isDarkTheme = thme.dark;
+	// 	if (this.isDarkTheme === true) {
+	// 	  this.theme = 'ag-theme-balham-dark';
+	// 	} else {
+	// 	  this.theme = 'ag-theme-balham';
+	// 	}
+	//   });
+	}
+  
+	ngOnChanges(changes): void {
+	  //console.log('+___+2');
+	  if (this.numLocale === 'en-US') {
+		this.localeText = AG_GRID_LOCALE_EN;
+	  } else {
+		// tr-TR
+		this.localeText = AG_GRID_LOCALE_TR;
+	  }
+  
+	  if (this.changeCol) {
+		const coldef: ColDef = this.setCol(this.changeCol, 1);
+		this.columnDefs.forEach((col, i) => {
+		  if (col.field === coldef.field) {
+			col.filterParams = coldef.filterParams;
+			col.cellEditorParams = coldef.cellEditorParams;
+		  }
+		});
+		this.gridApi.setColumnDefs(this.columnDefs);
+		return;
+	  }
+  
+	  if (this.options['sidebarVisible'] !== undefined) {
+		this.sideBar.hiddenByDefault = !this.options['sidebarVisible'];
+	  }
+  
+	  if (this.options['sortObj'] !== undefined) {
+		this.sort = this.options['sortObj'];
+	  }
+  
+	  if (this.options['locale'] === undefined) {
+		this.options['locale'] = this.numLocale;
+	  }
+  
+	  if (this.options['emptyErrorText'] !== undefined) {
+		this.emptyErrorText = this.options['emptyErrorText'];
+	  }
+  
+	  if (this.options['firstLoadError'] !== undefined) {
+		this.firstLoadError = this.options['firstLoadError'];
+	  }
+  
+	  // dg butonstan gelenleri guncelle
+	  if (this.dgButtons !== undefined) {
+		for (const x in this.dgButtons) {
+		  this.dgButtonsInit[x] = this.dgButtons[x];
+		}
+	  }
+	  if (this.options['functionsReadOnly'] !== undefined) {
+		if (this.options['functionsReadOnly']) {
+		  this.gridApi.setFunctionsReadOnly(true);
+		  this.dgButtonsInit = {
+			hasAddBtn: false,
+			hasEditBtn: false,
+			hasDeleteBtn: false,
+			addBtnText: 'add',
+			editBtnText: 'edit',
+			deleteBtnText: 'delete',
+		  };
+		}
+	  }
+	  if (this.options['rowStyleFunc'] !== undefined) {
+		this.rowStyleFunc = this.options['rowStyleFunc'];
+	  }
+	  // basliklari duzenle
+	  // eger baslik bir daha gelirse
+	  // ve eskisi ile ayni ise degistrime
+	  if (this.dgColumnsArray !== this.columns) {
+		this.dgColumnsArray = this.columns;
+		this.columnDefs = [];
+		this.dgColumnsArray.forEach((col, i) => {
+		  const coldef: ColDef = this.setCol(col, i);
+		  this.columnDefs.push(coldef);
+		});
+	  }
+	  if (this.gridApi !== undefined) {
+		// console.log('+___+3');
+  
+		if (this.filterHasRun) {
+		  this.onFilterRun();
+		}
+  
+		if (
+		  this.options['multipleRowSelection'] !== undefined &&
+		  this.options['multipleRowSelection'] === true
+		) {
+		  this.gridOptions.rowSelection = 'multiple';
+		  this.isMultipleSelect = true;
+		} else {
+		  this.gridOptions.rowSelection = 'single';
+		}
+  
+		if (this.contextMenuItems !== undefined) {
+		  this.gridOptions.contextMenuItems = this
+			.contextMenuItems as DGMenuItem[];
+			this.gridOptions.getContextMenuItems = this.getContextMenuItems.bind(this);
+		}
+		if (this.sideMenuItems !== undefined) {
+		  this.sideMenuItems.forEach((smi) => {
+			smi.filters = this.filterModel;
+		  });
+		  this.sideBar.toolPanels[2].sideMenuItems = this.sideMenuItems;
+		  this.gridApi.setSideBar(this.sideBar);
+		}
+		if (this.statusBarItems !== undefined) {
+		  const panel =
+			this.gridApi.statusBarService.getStatusPanel('StatusPanelTotals');
+		  panel._params.summaryData = this.statusBarItems;
+		  this.gridApi.statusBarService.registerStatusPanel(
+			'StatusPanelTotals',
+			panel
+		  );
+		}
+		if (this.options['treeData'] !== undefined) {
+		  this.gridOptions.treeData = this.options['treeData']; // boolean
+		  this.gridOptions.groupDefaultExpanded = 0; // -1 hepsi açık // 0 hepsi kapalı // 1 en dıştaki başlıklar açık
+		  if (this.options['groupDefaultExpanded'] !== undefined) {
+			this.gridOptions.groupDefaultExpanded =
+			  this.options['groupDefaultExpanded'];
+		  }
+		  if (this.options['getDataPath'] !== undefined) {
+			// Gruplamanın hangi alandan oluşacağı belirleyen fonksiyon
+			this.gridOptions.getDataPath = this.options['getDataPath'];
+		  }
+		  if (this.options['autoGroupColumnDef'] !== undefined) {
+			// Gruplanacak alan özellkleri dgcolumn a değil buraya tanımlanıyor
+			this.gridOptions.autoGroupColumnDef =
+			  this.options['autoGroupColumnDef'];
+		  }
+		}
+		// if (this.options['rowClassRules'] !== undefined){
+		//   this.rowClassRules = this.options['rowClassRules'];
+		//   this.gridOptions.rowClassRules = this.options['rowClassRules'];
+		// }else{
+		//   this.gridOptions.rowClassRules = this.rowClassRules;
+		// }
+		if (this.rowClassRules !== undefined) {
+		  this.gridOptions.rowClassRules = this.rowClassRules;
+		}
+		this.gridOptions.suppressCellSelection = false;
+		this.gridOptions.overlayLoadingTemplate =
+		  '<div class="ag-overlay-loading-center" style="border:0px;">' +
+		  '<img src="assets/images/vias_animated_loading.gif" width="50%" border="0"/><br/><span>Veriler Yükleniyor</span></div>';
+		this.gridOptions.overlayNoRowsTemplate =
+		  '<span style="padding: 10px; border: 2px solid #444; background: lightgoldenrodyellow;">' +
+		  (this.firstLoadError === ''
+			? this.emptyErrorText
+			: this.firstLoadError) +
+		  '</span>';
+  
+		this.gridOptions.api.showLoadingOverlay();
+  
+		// this.gridOptions.api.resetRowHeights();
+  
+		// if (this.originalFilterModel !== undefined){
+		//   console.log('+___+3.5 filter set');
+		//   this.gridOptions.api.setFilterModel( this.originalFilterModel );
+		// }
+  
+		// veri geldi
+		if (this.columns.length > 0) {
+		  // console.log('+___+6');
+		}
+		if (this.dataSource.length > 0) {
+		  // console.log('+___+7');
+		  // data geldi. ilk bos hatasini sil
+		  this.options['firstLoadError'] = '';
+		}
+		if (changes.columnState) {
+		  // console.log(changes);
+		  // this.columnState = changes.columnState.currentValue;
+		  setTimeout(() => {
+			this.gridColumnApi.applyColumnState({
+			  state: changes.columnState.currentValue,
+			  applyOrder: true,
+			});
+		  }, 300);
+		} else if (
+		  this.columnState !== undefined &&
+		  this.columnState.length > 0
+		) {
+		  // console.log(changes);
+		  // this.columnState = changes.columnState.currentValue;
+		  setTimeout(() => {
+			this.gridColumnApi.applyColumnState({
+			  state: this.columnState,
+			  applyOrder: true,
+			});
+		  }, 300);
+		}
+	  } else {
+		if (
+		  this.options['multipleRowSelection'] !== undefined &&
+		  this.options['multipleRowSelection'] === true
+		) {
+		  this.gridOptions.rowSelection = 'multiple';
+		  this.isMultipleSelect = true;
+		} else {
+		  this.gridOptions.rowSelection = 'single';
+		}
+		if (this.statusBarItems !== undefined) {
+		  this.statusBar.statusPanels[0].statusPanelParams.summaryData =
+			this.statusBarItems;
+		}
+  
+		if (this.options['treeData'] !== undefined) {
+		  this.gridOptions.treeData = this.options['treeData']; // boolean
+		  this.gridOptions.groupDefaultExpanded = 0; // -1 hepsi açık // 0 hepsi kapalı // 1 en dıştaki başlıklar açık
+		  if (this.options['groupDefaultExpanded'] !== undefined) {
+			this.gridOptions.groupDefaultExpanded =
+			  this.options['groupDefaultExpanded'];
+		  }
+		  if (this.options['getDataPath'] !== undefined) {
+			// Gruplamanın hangi alandan oluşacağı belirleyen fonksiyon
+			this.gridOptions.getDataPath = this.options['getDataPath'];
+		  }
+		  if (this.options['autoGroupColumnDef'] !== undefined) {
+			// Gruplanacak alan özellkleri dgcolumn a değil buraya tanımlanıyor
+			this.gridOptions.autoGroupColumnDef =
+			  this.options['autoGroupColumnDef'];
+		  }
+		}
+	  }
+	}
+  
+	onGridReady(params): void {
+	  // console.log('+___+4');
+  
+	  this.gridApi = params.api;
+	  this.gridColumnApi = params.columnApi;
+	  this.gridReady.emit({
+		dgApi: params.api,
+	  });
+	//   this.themeService.user$.subscribe((thme) => {
+	// 	this.isDarkTheme = thme.dark;
+	// 	if (this.isDarkTheme === true) {
+	// 	  this.theme = 'ag-theme-balham-dark';
+	// 	} else {
+	// 	  this.theme = 'ag-theme-balham';
+	// 	}
+	//   });
+	  // this.ngOnChanges('');
+	}
+	onRowDataChanged(params): void {
+	  // console.log('burasi' + params);
+	  // this.gridOptions.api.ensureIndexVisible(
+	  //   this.gridApi.getSelectedRows(),
+	  //   'bottom'
+	  // );
+	}
+	setCol(col, i): ColDef {
+	  // sutunda bir params degiskeni lazimdi.
+	  // bu bos duruyor, dolayisiyla
+	  // diger degiskenleri de colStyles a  koyuyoruz
+	  const colStyles: [] = [];
+	  // orn. lang locale
+	  colStyles['numLocale'] = this.numLocale;
+  
+	  const coldef: ColDef = {
+		headerName: col.headerText,
+		field: col.dataField,
+		filterParams: {
+		  filterField: col.filterField,
+		  filterDataIdField: col.filterDataIdField,
+		  filterDataLabelField: col.filterDataLabelField,
+		  filterDataSource: [],
+		  values: [],
+		  closeOnApply: true,
+		  buttons: ['clear', 'reset'],
+		  debounceMs: 700,
+		  showTooltips: true,
+		  isLocalRefresh: this.options['isLocalRefresh'] ? true : false,
+		},
+	  };
+  
+	  if (col.noHeaderIcons !== undefined) {
+		coldef.headerComponentParams = {
+		  template:
+			'<div class="ag-cell-label-container" role="presentation">' +
+			'  <div ref="eLabel" class="ag-header-cell-label" role="presentation">' +
+			'    <span ref="eText" class="ag-header-cell-text" role="columnheader"></span>' +
+			'  </div>' +
+			'</div>',
+		};
+	  }
+  
+	  if (col.align !== undefined) {
+		colStyles['text-align'] = col.align;
+	  }
+  
+	  if (col.sticky !== undefined) {
+		coldef.lockPinned = col.sticky;
+		if (col.sticky) {
+		  coldef.pinned = 'left';
+		}
+	  }
+  
+	  if (col.width !== undefined) {
+		coldef.width = col.width;
+		coldef.minWidth = col.width;
+	  }
+  
+	  if (col.wrap !== undefined) {
+		coldef.flex = 1;
+		coldef.wrapText = col.wrap;
+		coldef.autoHeight = col.wrap ? true : false;
+	  }
+  
+	  if (col.labelFunction !== undefined) {
+		coldef.valueGetter = col.labelFunction;
+	  }
+	  if (col.cellEditorParams !== undefined) {
+		coldef.valueGetter = col.cellEditorParams;
+	  }
+	  if (col.columnColor !== undefined) {
+		colStyles['color'] = col.columnColor;
+	  }
+	  if (col.columnBackgroundColor !== undefined) {
+		colStyles['backgroundColor'] = col.columnBackgroundColor;
+	  }
+	  if (this.options['hasSelectButton'] !== undefined) {
+		if (this.options['hasSelectButton'] === true && i === 0) {
+		  coldef.checkboxSelection = true;
+		}
+	  }
+	  if (this.options['checkboxSelection'] !== undefined) {
+		if (this.options['checkboxSelection'] === true && i === 0) {
+		  coldef.checkboxSelection = true;
+		}
+	  }
+  
+	  ////////////////////////////
+	  //    FILTRELER
+	  ////////////////////////////
+  
+	  // ID alani
+	  if (col.dataType === FieldTypes.Id) {
+		coldef.filter = this.options['isLocalRefresh']
+		  ? 'agMultiColumnFilter'
+		  : 'agNumberColumnFilter';
+		coldef.filterParams = { ...coldef.filterParams, ...this.idFilterParams };
+		colStyles['text-align'] = 'right';
+  
+		// Numerik
+	  } else if (col.dataType === FieldTypes.Number) {
+		coldef.filter = this.options['isLocalRefresh']
+		  ? 'agMultiColumnFilter'
+		  : 'agNumberColumnFilter';
+		coldef.filterParams = {
+		  ...coldef.filterParams,
+		  ...this.numericFilterParams,
+		};
+		colStyles['text-align'] = 'right';
+		coldef.valueFormatter = this.numberFormatter;
+		// coldef.filter = 'NumericFilter';
+		// döviz
+	  } else if (col.dataType === FieldTypes.Currency) {
+		coldef.filter = this.options['isLocalRefresh']
+		  ? 'agMultiColumnFilter'
+		  : 'agNumberColumnFilter';
+		coldef.filterParams = {
+		  ...coldef.filterParams,
+		  ...this.numericFilterParams,
+		};
+		// coldef.filter = 'agNumberColumnFilter';
+		colStyles['text-align'] = 'right';
+		coldef.valueFormatter = this.currencyFormatter;
+		// coldef.filter = 'NumericFilter';
+		// eger currency yada unit var ise bu alandan degiskeni alacagiz...
+		if (col.unitField !== undefined) {
+		  colStyles['currencyField'] = col.unitField;
+		} else if (col.unitDataSource !== undefined) {
+		  colStyles['currencyDataSource'] = col.unitDataSource;
+		} else {
+		  if (col.currencyLeftField !== undefined) {
+			colStyles['currencyLeftField'] = col.currencyLeftField;
+		  }
+		  if (col.currencyRightField !== undefined) {
+			colStyles['currencyRightField'] = col.currencyRightField;
+		  }
+		}
+  
+		// Birim
+	  } else if (col.dataType === FieldTypes.Unit) {
+		coldef.filter = this.options['isLocalRefresh']
+		  ? 'agMultiColumnFilter'
+		  : 'agNumberColumnFilter';
+		coldef.filterParams = {
+		  ...coldef.filterParams,
+		  ...this.numericFilterParams,
+		};
+		colStyles['text-align'] = 'right';
+		coldef.valueFormatter = this.unitFormatter;
+		// coldef.filter = 'NumericFilter';
+		// eger currency yada unit var ise bu alandan degiskeni alacagiz...
+		if (col.unitField !== undefined) {
+		  colStyles['unitField'] = col.unitField;
+		} else if (col.unitDataSource !== undefined) {
+		  colStyles['unitDataSource'] = col.unitDataSource;
+		}
+  
+		// Tarih
+	  } else if (col.dataType === FieldTypes.DatePicker) {
+		coldef.filter = this.options['isLocalRefresh']
+		  ? 'agMultiColumnFilter'
+		  : 'agDateColumnFilter';
+		coldef.filterParams = {
+		  ...coldef.filterParams,
+		  ...this.dateFilterParams,
+		};
+		coldef.valueFormatter = this.dateFormatter;
+		coldef.cellClass = 'date';
+		colStyles['text-align'] = 'right';
+		// coldef.filter = 'DateFilter';
+  
+		// Saat
+	  } else if (col.dataType === FieldTypes.Time) {
+		coldef.filter = this.options['isLocalRefresh']
+		  ? 'agMultiColumnFilter'
+		  : 'agNumberColumnFilter';
+		coldef.filterParams = {
+		  ...coldef.filterParams,
+		  ...this.numericFilterParams,
+		};
+		// coldef.filter = 'agDateColumnFilter';
+		coldef.cellClass = 'dateTime';
+		coldef.valueFormatter = this.timeFormatter;
+		colStyles['text-align'] = 'right';
+  
+		// AutoComplete
+		// DropDown
+	  } else if (
+		col.dataType === FieldTypes.AutoComplete ||
+		col.dataType === FieldTypes.DropDown
+	  ) {
+		// coldef.filter = 'agMultiColumnFilter';
+	  //   coldef.filter = 'agSetColumnFilter';
+		coldef.filter = this.options['isLocalRefresh']
+		? 'agMultiColumnFilter'
+		: 'agSetColumnFilter';
+		// // coldef.filter = 'agSetFilter';
+  
+		coldef.filterParams.values = [];
+		// (coldef.filterParams.buttons = ['apply', 'clear', 'reset']),
+		coldef.filterParams.filterDataSource = [];
+	  //   coldef.filterParams.isLocalRefresh = true;
+		coldef.valueFormatter = this.idLabelFunction;
+		coldef.valueGetter = (params) => {
+		  return params.data[params.column.getColId()];
+		}
+		if (col.filterDataSourceFunc !== undefined) {
+		  coldef.filterParams.filterField = col.filterField;
+		}
+		if (col.filterDataSource !== undefined) {
+		  coldef.filterParams.filterDataSource = col.filterDataSource;
+		  // coldef.filterParams.values = col.filterDataSource;
+		  (col.filterDataSource as Array<FilterOptions>).forEach((fo) => {
+			coldef.filterParams.values.push(fo.label);
+		  });
+		  // console.log(Array.isArray(coldef.filterParams.values));
+		  // coldef.valueFormatter = this.idLabelFunction;
+		}
+  
+		// coldef.filterValueGetter = (params) =>{
+		//   return   params.data[params.column.getColId()];
+		// }
+		// coldef.filterParams.
+		coldef.filterParams.keyCreator = (params) => {
+		  return params.value.value
+		};
+		coldef.filterParams.valueFormatter = (params) => {
+		  return params.value;
+		  // console.log(Array.isArray(params.coldef.filterParams.values));
+		  // if(params.value == "[object Object]"){
+		  //   return params.colDef.filterParams.filterDataSource.map(h=>h.label).toString().replaceAll(","," , ")
+		  // }else{
+		  //   return params.value.label;
+		  // }
+		};
+		// coldef.filterParams.valueFormatter = this.idLabelFunction;
+  
+  
+  
+		// } else if (col.dataType === FieldTypes.DropDown) {
+		//   // coldef.filter = 'DropDownFilter';
+		//   // coldef.filter = 'DgFilter';
+		//   // coldef.filter = 'AutoCompleteFilter';
+		//   coldef.filter = 'agMultiColumnFilter';
+		// coldef.filter = 'agMultiColumnFilter';
+		// coldef.filterParams = { ...coldef.filterParams, ...this.textFilterParams };
+		// coldef.keyCreator = this.dropdownKeyCreator;
+		// coldef.valueFormatter = this.dropdownValueFormatter;
+		//   coldef.filterParams = { ...coldef.filterParams, ...this.textFilterParams };
+		//   coldef.keyCreator = this.dropdownKeyCreator;
+		//   coldef.valueFormatter = this.dropdownValueFormatter;
+		//   if (col.filterDataSource !== undefined) {
+		//     coldef.filterParams.values = col.filterDataSource as Array<FilterOptions>;
+		//     // coldef.filterParams.filterDataSource = col.filterDataSource;
+		//   } else {
+		//     coldef.filterParams.values = [{label: '', value: -1}];
+		//     // coldef.filterParams.filterDataSource = [];
+		//   }
+  
+		// Text
+	  } else {
+		// coldef.filter = 'TextFilter'; // 'agTextColumnFilter';
+		coldef.filter = this.options['isLocalRefresh']
+		  ? 'agMultiColumnFilter'
+		  : 'agTextColumnFilter';
+		coldef.filterParams = {
+		  ...coldef.filterParams,
+		  ...this.textFilterParams,
+		};
+	  }
+  
+	  // labelfunction yerine filtredeki degerler.
+	  // orn. contractor_id, project_id, unit_id vs
+	  if (col.labelFunctionIsFilter) {
+		coldef.valueFormatter = this.idLabelFunction;
+	  }
+	  if (col.fractionDigits !== undefined) {
+		colStyles['fractionDigits'] = col.fractionDigits;
+	  }
+  
+	  ////////////////////////////
+	  //    EDITLER
+	  ////////////////////////////
+  
+	  if (col.editable !== undefined) {
+		if (col.editable) {
+		  coldef.editable = col.editable;
+		  coldef.cellEditorParams = {};
+		  if (col.dataType !== undefined) {
+			if (col.dataType === FieldTypes.AutoComplete) {
+			  coldef.cellEditor = 'agRichSelectCellEditor';
+			  // coldef.cellRenderer = 'EditorAutoComplate';
+			  coldef.cellEditorParams.values = [];
+			  coldef.valueSetter = (params) => {
+				params.data[col.dataField] = col.editDataSource.find(
+				  (refData) => refData.label === params.newValue
+				)?.value;
+				return true;
+			  };
+  
+			  if (col.filterConnectedField !== undefined) {
+				coldef.cellEditorParams = (params) => {
+				  return {
+					values: col.editDataSource
+					  .filter(
+						(d) =>
+						  d[col.filterConnectedField] ===
+						  params.data[col.filterConnectedField]
+					  )
+					  .map((s) => s.label),
+					formatValue: function (params) {
+					  if (!Number.isNaN(params * 1)) {
+						return col.editDataSource.find(
+						  (refData) => refData.value + '' === params + ''
+						)?.label;
+					  }
+					  return params;
+					},
+				  };
+				};
+			  } else if (col.editDataSource !== undefined) {
+				coldef.cellEditorParams.values = col.editDataSource.map(
+				  (s) => s.label
+				);
+  
+				coldef.cellEditorParams.formatValue = (params) => {
+				  if (!Number.isNaN(params * 1)) {
+					return col.editDataSource.find(
+					  (refData) => refData.value + '' === params + ''
+					)?.label;
+				  }
+				  return params;
+				};
+			  }
+			} else if (col.dataType === FieldTypes.Text) {
+			  if (col.editField === FieldTypes.Number) {
+				coldef.cellEditor = 'EditorDecimalNumeric';
+				coldef.cellEditorParams = {
+				  values: col.editDataSource,
+				};
+			  } else if (coldef.wrapText === true) {
+				coldef.cellEditor = 'agLargeTextCellEditor';
+				coldef.cellEditorParams = {
+				  maxLength: 5000,
+				  cols: '50',
+				  rows: '6',
+				};
+			  } else {
+				coldef.cellEditor = 'agTextCellEditor';
+			  }
+			}
+		  }
+		}
+	  }
+	  if (col.cellRendererFunc !== undefined) {
+		coldef.cellRenderer = col.cellRendererFunc;
+	  }
+	  if (col.tooltipValueGetter !== undefined) {
+		coldef.tooltipValueGetter = col.tooltipValueGetter;
+	  }
+	  if (col.cellStyleFunc !== undefined) {
+		coldef.cellStyle = col.cellStyleFunc;
+	  } else {
+		if (this.rowStyleFunc !== undefined) {
+		  coldef.cellStyle = this.rowStyleFunc;
+		} else {
+		  coldef.cellStyle = Object.assign({}, colStyles);
+		}
+	  }
+	  return coldef;
+	}
+  
+	getRowHeight(params): any {
+	  return params.data.rowHeight;
+	}
+  
+	onPaginationChanged($event): void {
+	  if (this.totalPages > 0) {
+		if (this.gridApi !== undefined) {
+		  const statusBarComponent = this.gridApi.getStatusPanel(
+			'StatusPanelPagination'
+		  );
+		  if (statusBarComponent) {
+			const componentInstance =
+			  statusBarComponent.getFrameworkComponentInstance();
+			// toplam ve bulundugu sayfayi guncelle
+			componentInstance.currentPage = this.currentPage;
+			componentInstance.totalPages = this.totalPages;
+			// bir kere subscribe oldu ise, bir daha olma
+			if (!this.pageChangeSubscribed) {
+			  this.pageChangeSubscribed = true;
+			  componentInstance.pageChange.subscribe((arg) =>
+				this.onChangePageEvent(arg)
+			  );
+			}
+			this.gridApi.forEachNode((node) => {
+			  if (this.secilmislerKlubu !== undefined) {
+				this.secilmislerKlubu.forEach((sk) => {
+				  if (sk['id'] === node.data.id) {
+					node.setSelected(true);
+				  }
+				});
+			  }
+			});
+		  }
+		}
+	  }
+	}
+  
+	onChangePageEvent(direction: PageDirection): void {
+	  // console.log(direction);
+	  let p = 1;
+	  // directiona gore p ayarla
+	  switch (direction) {
+		default:
+		case PageDirection.First:
+		  p = 1;
+		  break;
+		case PageDirection.Previous:
+		  p = this.currentPage - 1;
+		  break;
+		case PageDirection.Next:
+		  p = this.currentPage + 1;
+		  break;
+		case PageDirection.Last:
+		  p = this.totalPages;
+		  break;
+	  }
+	  // p ye gore sayfayi ayarla
+	  if (p !== this.currentPage && p <= this.totalPages && p >= 1) {
+		this.currentPage = p;
+		this.pageHasChanged = true;
+		// checkbox verisini guncelle
+		this.addToSecilmislerKlubu(this.gridApi.getSelectedRows());
+		// sayfaya git
+		this.prepareRefreshEvent(this.gridApi);
+	  }
+	}
+  
+	onGridSort(event): void {
+	  if (!this.options['isLocalRefresh']) {
+		// event.stopPropagation();
+		// event.preventDefault();
+	  //   this.prepareRefreshEvent(event.api);
+	  }
+	}
+  
+	// uygulanan filtre dbden gelince calisiyor
+	onFilterRun(): void {
+	  // gelen veriler ile data type esleme problemi icin
+	  // once butun filtreleri bir temizliyoruz.
+	  // grid api icindeki setfilter ayni zamanda calistiuriyor
+	  this.gridApi.setFilterModel(null);
+	  // sonra daha once kaydettigimiz orijinal halini geri yukluyoruz
+	  // tslint:disable-next-line: forin
+	  for (const key in this.originalFilterModel) {
+		this.gridApi.getFilterInstance(key, (filter) => {
+		  const colDef = this.gridApi.getColumnDef(key);
+		  colDef.filter = true;
+		  // date setfilter vs icin gonderirken yaptiklarimizi geri al
+		  if (this.originalFilterModel[key].filterType === 'date') {
+			// date from
+			let d: Date = new Date(this.originalFilterModel[key].dateFrom * 1000);
+			this.originalFilterModel[key].dateFrom =
+			  d.getFullYear() +
+			  '-' +
+			  (d.getMonth() + 1) +
+			  '-' +
+			  d.getDate() +
+			  ' 00:00:00';
+			// date to
+			if (this.originalFilterModel[key].dateTo != 0) {
+			  d = new Date(this.originalFilterModel[key].dateTo * 1000);
+			  this.originalFilterModel[key].dateTo =
+				d.getFullYear() +
+				'-' +
+				(d.getMonth() + 1) +
+				'-' +
+				d.getDate() +
+				' 00:00:00';
+			}
+		  } else if (this.originalFilterModel[key].filterType === 'set') {
+			const colDef = this.gridApi.getColumnDef(key);
+			const values = [];
+			this.originalFilterModel[key].values.forEach((v) => {
+			  const val = colDef.filterParams.filterDataSource.find(
+				(x) => x.value === v
+			  );
+			  if (val !== undefined) {
+				values.push(val.label);
+			  }
+			});
+			this.originalFilterModel[key].values = values;
+		  }
+		  // ama calistirmiyoruz. calistrimamasi icin geri yuklerken tek tek dolasmak lazim.
+		  filter.setModel(this.originalFilterModel[key]);
+		});
+	  }
+	}
+	// filtrelerde b
+	onGridFilterModified(event): void {
+	  // console.log(event);
+	}
+	// filtre ui uzerinden set edilip uygulaya basilinca calisiyor
+	onGridFilter(event): void {
+	  if (this.filterHasRun) {
+		this.filterHasRun = false;
+		event.stopPropagation();
+		event.preventDefault();
+		return;
+	  }
+	  if (!this.options['isLocalRefresh']) {
+		if (this.pageHasChanged) {
+		  this.gridOptions.api.setFilterModel(this.originalFilterModel);
+		  this.pageHasChanged = false;
+		  event.stopPropagation();
+		  event.preventDefault();
+		  return;
+		}
+		// event.stopPropagation();
+		// event.preventDefault();
+		if (this.originalFilterModel !== event.api.getFilterModel()) {
+		  // // 1. sayfaya don
+		  // this.currentPage = 1;
+		  /* if (event.afterDataChange !== undefined && event.afterDataChange){
+			//this.gridOptions.api.setFilterModel( this.originalFilterModel );
+		   // this.filterHasRun = true;
+		  }else{
+			this.prepareRefreshEvent(event.api);
+		  }*/
+		  this.prepareRefreshEvent(event.api);
+		}
+	  }
+	}
+	prepareRefreshEvent(api: GridApi): void {
+	  // this.gridOptions.api.showLoadingOverlay();
+	  // this.gridColumnApi.getColumnState()
+	  // const sortModel: {
+	  //   colId: string;
+	  //   sort: string;
+	  // }[] = api.getSortModel();
+	  const sortModel = this.gridColumnApi.getColumnState()
+	  .filter(col => col.sort) // Sadece sıralanmış sütunları al
+	  .map(col => ({
+		  colId: col.colId,
+		  sort: col.sort,
+		  sortIndex: col.sortIndex, // Çoklu sıralama varsa sıralama indexi
+	  }));
+	  sortModel.forEach((o) => {
+		const colDef = api.getColumnDef(o.colId);
+		// sort field alani bul
+		this.sort.column_name = this.dgColumnsArray.find(
+		  (x) => x.dataField === colDef.field
+		).sortField;
+		this.sort.sort_type =
+		  o.sort === 'asc' ? SortType.Ascending : SortType.Descending;
+		if (
+		  this.dgColumnsArray.find((x) => x.dataField === colDef.field)
+			.sortType === undefined
+		) {
+		  this.dgColumnsArray.find((x) => x.dataField === colDef.field).sortType =
+			SortType.Ascending;
+		}
+		this.sort.sort_type = this.dgColumnsArray.find(
+		  (x) => x.dataField === colDef.field
+		).sortType;
+		if (
+		  this.dgColumnsArray.find((x) => x.dataField === colDef.field)
+			.sortType === SortType.Ascending
+		) {
+		  this.dgColumnsArray.find((x) => x.dataField === colDef.field).sortType =
+			SortType.Descending;
+		} else {
+		  this.dgColumnsArray.find((x) => x.dataField === colDef.field).sortType =
+			SortType.Ascending;
+		}
+	  });
+  
+	  this.filterModel = this.parseFilter(api);
+  
+	  const e: DataGridRefreshEvent = {
+		pageNo: this.currentPage,
+		sort: this.sort,
+		filters: this.filterModel,
+	  };
+	  this.filterHasRun = true;
+	  this.refresh.emit(e);
+	}
+  
+	private parseFilter(api: GridApi): object {
+	  const filters: {} = api.getFilterModel();
+	  this.originalFilterModel = api.getFilterModel();
+	  const filter: {} = {};
+	  // console.log(this.gridApi.getFilterModel());
+	  // tslint:disable-next-line: forin
+	  for (const key in filters) {
+		const colDef = api.getColumnDef(key);
+		// veritabanina gonderilecek filter alan adi
+		const filterKey: string = colDef.filterParams.filterField;
+		filter[filterKey] = filters[key];
+		if (filters[key].filterType === 'date') {
+		  filter[filterKey].dateFrom =
+			new Date(filters[key].dateFrom).getTime() / 1000;
+		  filter[filterKey].dateTo =
+			new Date(filters[key].dateTo).getTime() / 1000;
+		} else if (filters[key].filterType === 'number') {
+		} else if (filters[key].filterType === 'set') {
+		  const values = [];
+		  filter[filterKey].values.forEach((v) => {
+			const val = colDef.filterParams.filterDataSource.find(
+			  (x) => x.label === v
+			);
+			if (val !== undefined) {
+			  values.push(val.value);
+			}
+		  });
+		  filter[filterKey].values = values;
+		}
+	  }
+	  return filter;
+	}
+  
+	idLabelFunction(params): string {
+	  let txt = '';
+	  params.colDef.filterParams.filterDataSource.forEach((obj) => {
+		if (isNaN(Number(obj.value)) || isNaN(Number(params.value))) {
+		  if (obj.value === params.value) {
+			txt = obj.label;
+			return txt;
+			// }else if(params.value=="[object Object]"){
+			//   return params.colDef.filterParams.values[obj.value].label;
+		  }
+		  // tslint:disable-next-line: radix
+		} else if (parseFloat(obj.value) === parseFloat(params.value)) {
+		  txt = obj.label;
+		  return txt;
+		  // string , boolean
+		} else if (obj.value === params.value) {
+		  txt = obj.label;
+		  return txt;
+		}
+	  });
+	  return txt;
+	}
+	numberFormatter(params): string {
+	  let fractionDigits = 2;
+	  if (params.colDef.cellStyle.fractionDigits !== undefined) {
+		fractionDigits = params.colDef.cellStyle.fractionDigits;
+	  }
+	  let val = params.value;
+	  if (params.value === undefined) {
+		val = 0;
+	  } else if (isNaN(val)) {
+		const thousandSeparator = Intl.NumberFormat('tr-TR')
+		  .format(11111)
+		  .replace(/\p{Number}/gu, '');
+		const decimalSeparator = Intl.NumberFormat('tr-TR')
+		  .format(1.1)
+		  .replace(/\p{Number}/gu, '');
+		val = parseFloat(
+		  val
+			.replace(new RegExp('\\' + thousandSeparator, 'g'), '')
+			.replace(new RegExp('\\' + decimalSeparator), '.')
+		);
+	  }
+  
+	  return Intl.NumberFormat('tr-TR', {
+		maximumFractionDigits: fractionDigits,
+		minimumFractionDigits: fractionDigits,
+	  }).format(val);
+	}
+	parseLocaleNumber(stringNumber, locale): number {
+	  const thousandSeparator = Intl.NumberFormat(locale)
+		.format(11111)
+		.replace(/\p{Number}/gu, '');
+	  const decimalSeparator = Intl.NumberFormat(locale)
+		.format(1.1)
+		.replace(/\p{Number}/gu, '');
+  
+	  return parseFloat(
+		stringNumber
+		  .replace(new RegExp('\\' + thousandSeparator, 'g'), '')
+		  .replace(new RegExp('\\' + decimalSeparator), '.')
+	  );
+	}
+	currencyFormatter(params): string {
+	  let currencySymbolRight = '';
+	  let currencySymbolLeft = '';
+	  // get_currency
+	  if (params.colDef.cellStyle.currencyDataSource !== undefined) {
+		params.colDef.cellStyle.currencyDataSource.forEach((c) => {
+		  if (c.id === params.colDef.cellStyle.currencyField) {
+			currencySymbolLeft = c.symbol_left;
+			currencySymbolRight = c.symbol_right;
+		  }
+		});
+		// currencyRightField orn. customer_symbol_right  contractor_symbol_right
+		// currencyLeftField orn. customer_symbol_left contractor_symbol_left
+	  } else if (
+		params.colDef.cellStyle.currencyRightField !== undefined ||
+		params.colDef.cellStyle.currencyLeftField !== undefined
+	  ) {
+		if (
+		  params.data[params.colDef.cellStyle.currencyRightField] !== undefined
+		) {
+		  currencySymbolRight =
+			params.data[params.colDef.cellStyle.currencyRightField];
+		}
+		if (
+		  params.data[params.colDef.cellStyle.currencyLeftField] !== undefined
+		) {
+		  currencySymbolLeft =
+			params.data[params.colDef.cellStyle.currencyLeftField];
+		}
+		// TL USD vs
+	  } else if (params.colDef.cellStyle.currencyField !== undefined) {
+		if (params.data[params.colDef.cellStyle.currencyField] !== undefined) {
+		  currencySymbolRight =
+			params.data[params.colDef.cellStyle.currencyField];
+		}
+	  }
+	  return (
+		currencySymbolLeft +
+		' ' +
+		Intl.NumberFormat(params.colDef.cellStyle.numLocale, {
+		  maximumFractionDigits: 2,
+		  minimumFractionDigits: 2,
+		}).format(params.value) +
+		' ' +
+		currencySymbolRight
+	  );
+	}
+	unitFormatter(params): string {
+	  let unitName = '';
+	  // get_units
+	  if (params.colDef.cellStyle.unitDataSource !== undefined) {
+		params.colDef.cellStyle.unitDataSource.forEach((c) => {
+		  if (c.id === params.colDef.cellStyle.unitField) {
+			unitName = c.symbol_right;
+		  }
+		});
+		// unit_name
+	  } else if (params.colDef.cellStyle.unitField !== undefined) {
+		if (params.data[params.colDef.cellStyle.unitField] !== undefined) {
+		  unitName = params.data[params.colDef.cellStyle.unitField];
+		}
+	  }
+	  return (
+		Intl.NumberFormat(params.colDef.cellStyle.numLocale, {
+		  maximumFractionDigits: 2,
+		  minimumFractionDigits: 2,
+		}).format(params.value) +
+		' ' +
+		unitName
+	  );
+	}
+	dateFormatter(params): string {
+	  if (
+		params.value == null ||
+		params.value === '' ||
+		params.value === 0 ||
+		params.value === '0' ||
+		params.value === undefined
+	  ) {
+		return '-';
+	  }
+	  const d: Date = new Date(params.value * 1000);
+	  const options: Intl.DateTimeFormatOptions = {
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+		hour12: false,
+		hour: '2-digit',
+		minute: '2-digit',
+	  };
+	  return d.toLocaleDateString('tr-TR', options);
+	}
+	timeFormatter(params): string {
+	  const d: Date = new Date(params.value * 1000);
+	  const options: Intl.DateTimeFormatOptions = {
+		hour12: false,
+		hour: '2-digit',
+		minute: '2-digit',
+	  };
+	  return d.toLocaleDateString('tr-TR', options);
+	}
+	dropdownValueFormatter(params): string {
+	  return params.value.value;
+	}
+	// FilterOptions interface kullaniyor burada
+	dropdownKeyCreator(params): string {
+	  return params.value;
+	  return params.value.value.toString();
+	}
+  
+	addClicked(): void {
+	  this.addClick.emit({});
+	}
+	editClicked(): void {
+	  const selectedRows: any[] = this.gridApi.getSelectedNodes();
+	  if (selectedRows.length > 0) {
+		const event: DataGridEvent = {
+		  index: selectedRows[0].id,
+		  item: selectedRows[0].data,
+		};
+		this.editClick.emit(event);
+	  }
+	}
+	deleteClicked(): void {
+	  const selectedRows: any[] = this.gridApi.getSelectedNodes();
+	  if (selectedRows.length > 0) {
+		const event: DataGridEvent = {
+		  index: selectedRows[0].id,
+		  item: selectedRows[0].data,
+		};
+		this.deleteClick.emit(event);
+	  }
+	}
+	selectedClicked(): void {
+	  this.addToSecilmislerKlubu(this.gridApi.getSelectedRows());
+  
+	  const event: DataGridEvent = {
+		selectedItems: this.secilmislerKlubu,
+	  };
+	  this.selectClick.emit(event);
+	}
+  
+	addToSecilmislerKlubu(selectedRows: any[]): void {
+	  if (this.secilmislerKlubu === undefined) {
+		this.secilmislerKlubu = [];
+	  }
+	  if (selectedRows.length > 0) {
+		selectedRows.forEach((sr) => {
+		  for (const s in this.secilmislerKlubu) {
+			if (this.secilmislerKlubu[s].id === sr.id) {
+			  delete this.secilmislerKlubu[s];
+			}
+		  }
+		  this.secilmislerKlubu.push(sr);
+		});
+	  }
+	}
+  
+	onFirstDataRendered($event): void {
+	  // this.setValue('#undoInput', 0);
+	  // this.disable('#undoInput', true);
+	  // this.disable('#undoBtn', true);
+	  // this.setValue('#redoInput', 0);
+	  // this.disable('#redoInput', true);
+	  // this.disable('#redoBtn', true);
+	}
+	disable(id, disabled): void {
+	  document.querySelector(id).disabled = disabled;
+	}
+	setValue(id, value): void {
+	  document.querySelector(id).value = value;
+	}
+	onCellValueChanged($event): void {
+	  const event: CellChangeEvent = {
+		newValue: $event.newValue,
+		columnId: $event.column.colId,
+		rowData: $event.data,
+	  };
+	  this.cellChange.emit(event);
+	}
+	getContextMenuItems(params): MenuItemDef[] {
+	  const customItems = params.api.gridOptionsWrapper.gridOptions.contextMenuItems;
+  
+	  if (Array.isArray(customItems)) {
+		// Flatten array manually using reduce
+		const formattedCustomItems = customItems.reduce((acc, item) => {
+		  if (item.name === 'separator') {
+			  // Separator ekle
+			  acc.push('separator');
+			} else  if (item && typeof item === 'object' && item.name) {
+			acc.push({
+			  ...item,
+			  action: () => {
+				// Gelen action fonksiyonunu çağır ve params'i ilet
+				if (item?.action) {
+				  item.action(params,
+					this.route,this.translate, 
+					this.storage, this.globals, 
+					this.viasService,this.dialog
+				  );
+				}
+			  },
+			});
+		  } else {
+			console.warn('Invalid menu item:', item);
+		  }
+		  return acc;
+		}, []);
+  
+		return [...formattedCustomItems, 'separator', ...params.defaultItems];
+	  } else{
+  
+		return params.defaultItems;
+	  }
+	};
+  
+	onContextMenuAction($event): void {
+	  this.contexMenuAction.emit($event);
+	  // DataGridEvent
+	}
+	handlePasteEnd(event: any) {
+		console.log('Yapıştırılan veri datagrid:', event);
+		this.pasteEnd.emit(event);
+	}
+	handlePasteStart(event: any) {
+		console.log('Yapıştırılan veri datagrid start:', event);
+		this.pasteStart.emit(event);
+	}
+	pasteParser(params: any): any[][] {
+		const rows = params.data || [];
+
+		// Emit paste verisi, dışarıya bilgi ver
+		this.pasteParsed.emit(rows);
+
+		return rows; // Grid’e yapıştırılacak data
+	}
+	onCellDoubleClicked($event): void {
+	  if ($event.node.selected) {
+		const event: DataGridEvent = {
+		  index: $event.rowIndex,
+		  item: $event.data,
+		};
+		this.dblClick.emit(event);
+	  }
+	}
+	/*
+	  (rowSelected)="onRowSelected($event)"
+	  (selectionChanged)="onSelectionChanged($event)"
+	  (gridSizeChanged)="onGridSizeChanged($event)"
+	  (gridReady)="onGridReady($event)"
+	  */
+	onRowSelected($event): void {
+	  // console.log("onue-sr",this.gridApi.getSelectedRows());
+	  // console.log("onur-rs",$event);
+	  if ($event.node.selected) {
+		const event: DataGridEvent = {
+		  index: $event.rowIndex,
+		  item: $event.data,
+		};
+		this.rowClick.emit(event);
+	  }
+	}
+	onSelectionChanged($event): void {
+	  // console.log("onur-cs",$event);
+	  // if ($event !== undefined) {
+	  //   const event: DataGridEvent = {
+	  //     index: $event.rowIndex,
+	  //     item: $event.data
+	  //   };
+	  //   this.selec.emit(event);
+	  // }
+	  for (const i in $event.api.selectionController.selectedNodes) {
+		if ($event.api.selectionController.selectedNodes[i] === undefined) {
+		  for (const s in this.secilmislerKlubu) {
+			if (
+			  this.secilmislerKlubu[s].id ===
+			  $event.api.getDisplayedRowAtIndex(i).data.id
+			) {
+			  delete this.secilmislerKlubu[s];
+			}
+		  }
+		}
+	  }
+  
+	  const selectedRows: any[] = this.gridApi.getSelectedRows();
+	  if (selectedRows !== undefined) {
+		const event: DataGridEvent = {
+		  selectedItems: selectedRows,
+		};
+		this.selectChange.emit(event);
+	  }
+	}
+	onDataChange($event): void {
+	  const event: DataGridRefreshEvent = {
+		pageNo: 1,
+		sort: { column_name: 'id', sort_type: SortType.Ascending },
+		filters: {},
+	  };
+  
+	  this.refresh.emit(event);
+	}
+  
+	rowClickHandler(index: number, row: object): void {
+	  // this.selectedRowIndex = index;
+	  // this.selectedRowItem = row;
+	  // const event: DataGridEvent = {
+	  //   index: this.selectedRowIndex,
+	  //   item: this.selectedRowItem,
+	  // };
+	  // this.rowClick.emit(event);
+	}
+	onGridSizeChanged(params): void {
+	  // const gridWidth = document.getElementById('dg-container').offsetWidth;
+	  // const columnsToShow = [];
+	  // const columnsToHide = [];
+	  // let totalColsWidth = 0;
+	  // const allColumns = params.columnApi.getAllColumns();
+	  // for (let i = 0; i < allColumns.length; i++) {
+	  //   const column = allColumns[i];
+	  //   totalColsWidth += column.getMinWidth();
+	  //   if (totalColsWidth > gridWidth) {
+	  //     columnsToHide.push(column.colId);
+	  //   } else {
+	  //     columnsToShow.push(column.colId);
+	  //   }
+	  // }
+	  // params.columnApi.setColumnsVisible(columnsToShow, true);
+	  // params.columnApi.setColumnsVisible(columnsToHide, false);
+	  // params.api.sizeColumnsToFit();
+	  // params.api.resetRowHeights();
+	}
+	onColumnResized($event): void {
+	  this.columnStateChange.emit({
+		tableId: this.tableId,
+		state: this.gridColumnApi.getColumnState(),
+	  });
+	  // console.log('column state saved');
+	}
+	onColumnVisible($event): void {
+	  this.columnStateChange.emit({
+		tableId: this.tableId,
+		state: this.gridColumnApi.getColumnState(),
+	  });
+	  // console.log('column state saved');
+	}
+	onColumnMoved($event): void {
+	  this.columnStateChange.emit({
+		tableId: this.tableId,
+		state: this.gridColumnApi.getColumnState(),
+	  });
+	  // console.log('column state saved');
+	}
+	clearFilters(): void {
+	  this.gridApi.setFilterModel(null);
+	}
+	restoreState(): void {
+	  if (!this.columnState) {
+		// console.log('no columns state to restore by, you must save state first');
+		return;
+	  }
+	  this.gridColumnApi.applyColumnState({
+		state: this.columnState,
+		applyOrder: true,
+	  });
+	  // console.log('column state restored');
+	}
+  
+	resetState(): void {
+	  this.gridColumnApi.resetColumnState();
+	  // console.log('column state reset');
+	}
+  
+	undo(): void {
+	  this.gridApi.undoCellEditing();
+	}
+  
+	redo(): void {
+	  this.gridApi.redoCellEditing();
+	}
+  
+	editColumns(): void { }
+	// getSelectedRows() {
+	//   const selectedNodes = this.agGrid.api.getSelectedNodes();
+	//   const selectedData = selectedNodes.map(node => node.data);
+	//   const selectedDataStringPresentation = selectedData.map(node => node.make + ' ' + node.model).join(', ');
+	//   alert(`Selected nodes: ${selectedDataStringPresentation}`);
+	// }
+  }
+  
